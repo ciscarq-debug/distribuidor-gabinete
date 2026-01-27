@@ -1,166 +1,201 @@
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
-import os
+from datetime import datetime, timedelta
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Distribuidor Gabinete", layout="wide")
+st.set_page_config(page_title="Distribuição GAB PRE/GO", layout="wide")
 
-# --- BLOQUEIO DE SEGURANÇA (SENHA) ---
-# Troque "gabinete2024" pela senha que você quiser
-senha_digitada = st.text_input("🔒 Digite a senha de acesso:", type="password")
-if senha_digitada != "gabinete2024":
-    st.info("Aguardando senha para liberar o sistema...")
+# --- ESTILIZAÇÃO CSS ---
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #004b87; color: white; }
+    .stMetric { background-color: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- INICIALIZAÇÃO DO ESTADO (BANCO DE DADOS TEMPORÁRIO) ---
+if 'marcardores' not in st.session_state:
+    st.session_state.marcardores = pd.DataFrame(columns=['Marcador', 'Peso'])
+if 'equipe' not in st.session_state:
+    st.session_state.equipe = pd.DataFrame(columns=['Nome', 'Especialidades', 'Saldo'])
+if 'ferias' not in st.session_state:
+    st.session_state.ferias = {}
+if 'historico' not in st.session_state:
+    st.session_state.historico = pd.DataFrame(columns=['Data', 'Processo', 'Marcador', 'Assessor', 'Peso Real'])
+if 'triador_atual' not in st.session_state:
+    st.session_state.triador_atual = None
+
+# --- FUNÇÕES AUXILIARES ---
+def calcular_bloqueio_ferias(nome_assessor):
+    if nome_assessor not in st.session_state.ferias:
+        return False
+    f = st.session_state.ferias[nome_assessor]
+    if f['inicio'] is None or f['fim'] is None:
+        return False
+    
+    hoje = datetime.now().date()
+    # Cálculo de 3 dias úteis antes
+    dias_contados = 0
+    temp_date = f['inicio']
+    while dias_contados < 3:
+        temp_date -= timedelta(days=1)
+        if temp_date.weekday() < 5: # Segunda a Sexta
+            dias_contados += 1
+    
+    data_inicio_bloqueio = temp_date
+    return data_inicio_bloqueio <= hoje <= f['fim']
+
+# --- TELA DE LOGIN ---
+def login():
+    st.title("🔐 Acesso Restrito")
+    senha = st.text_input("Digite a senha do Gabinete:", type="password")
+    if senha == "prego2026":
+        st.session_state.autenticado = True
+        st.rerun()
+    elif senha != "":
+        st.error("Senha incorreta.")
+
+if 'autenticado' not in st.session_state:
+    login()
     st.stop()
 
-# --- CONFIGURAÇÃO DE ARQUIVOS ---
-ARQUIVO_ASSESSORES = "dados_equipe.csv"
-ARQUIVO_MARCADORES = "dados_marcadores.csv"
-
-# --- FUNÇÕES ---
-def carregar_marcadores():
-    if not os.path.exists(ARQUIVO_MARCADORES):
-        dados = {
-            "Nome do Marcador": ["Ex: Embargos", "Ex: Apelação Criminal"],
-            "Peso": [1, 5],
-            "Categoria": ["Cível", "Criminal"]
-        }
-        df = pd.DataFrame(dados)
-        df.to_csv(ARQUIVO_MARCADORES, index=False)
-    else:
-        df = pd.read_csv(ARQUIVO_MARCADORES)
-    return df
-
-def carregar_assessores():
-    if not os.path.exists(ARQUIVO_ASSESSORES):
-        dados = {
-            "Nome": ["Assessor A", "Assessor B"],
-            "Saldo Pontos": [0, 0],
-            "Especialidades": ["TODAS", "TODAS"],
-            "Inicio Ferias": [None, None]
-        }
-        df = pd.DataFrame(dados)
-        df.to_csv(ARQUIVO_ASSESSORES, index=False)
-    else:
-        df = pd.read_csv(ARQUIVO_ASSESSORES)
-        df['Inicio Ferias'] = pd.to_datetime(df['Inicio Ferias'], errors='coerce').dt.date
-    return df
-
-def salvar_arquivo(df, nome_arquivo):
-    df.to_csv(nome_arquivo, index=False)
-
-def verificar_disponibilidade(assessor_row, categoria_processo):
-    hoje = date.today()
-    ferias = assessor_row['Inicio Ferias']
-    especialidades = assessor_row['Especialidades']
-    
-    # Regra de Férias (5 dias)
-    if pd.notnull(ferias):
-        dias_para_ferias = (ferias - hoje).days
-        if dias_para_ferias <= 0: return False, "Em Férias/Licença"
-        if dias_para_ferias <= 5: return False, f"Bloqueio Pré-Férias ({dias_para_ferias} dias restam)"
-
-    # Regra de Especialidade
-    if especialidades != "TODAS":
-        if categoria_processo not in especialidades:
-             return False, f"Não atende {categoria_processo}"
-    return True, "Apto"
-
-# --- INTERFACE ---
-st.title("⚖️ Sistema de Distribuição de Processos")
-
-df_marcadores = carregar_marcadores()
-df_assessores = carregar_assessores()
-
+# --- BARRA LATERAL (CONFIGURAÇÕES E PROCESSOS) ---
 with st.sidebar:
-    st.header("⚙️ Configurações")
-    tab1, tab2 = st.tabs(["👥 Equipe", "📂 Marcadores"])
-    
-    with tab1:
-        st.caption("Ajuste férias e especialidades")
-        df_assessores_editado = st.data_editor(
-            df_assessores,
-            num_rows="dynamic",
-            column_config={
-                "Inicio Ferias": st.column_config.DateColumn("Início Férias"),
-                "Saldo Pontos": st.column_config.NumberColumn("Saldo", disabled=True),
-                "Especialidades": st.column_config.TextColumn("Especialidades (Use 'TODAS' ou vírgulas)")
-            },
-            key="editor_equipe"
-        )
-        if st.button("Salvar Equipe"):
-            salvar_arquivo(df_assessores_editado, ARQUIVO_ASSESSORES)
-            st.success("Salvo!")
-            st.rerun()
+    st.title("⚙️ Configurações")
+    aba_cfg = st.tabs(["Marcadores", "Equipe", "Férias"])
 
-    with tab2:
-        st.caption("Tipos de Processos e Pesos")
-        df_marcadores_editado = st.data_editor(
-            df_marcadores,
-            num_rows="dynamic",
-            column_config={
-                "Peso": st.column_config.NumberColumn("Peso", min_value=1, max_value=20),
-                "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Cível", "Criminal", "Trabalhista", "Administrativo", "Constitucional", "Tributário", "Família"])
-            },
-            key="editor_marcadores"
-        )
-        if st.button("Salvar Marcadores"):
-            salvar_arquivo(df_marcadores_editado, ARQUIVO_MARCADORES)
-            st.success("Salvo!")
-            st.rerun()
-            
-    st.divider()
-    if st.button("⚠️ Zerar Saldos (Novo Mês)"):
-        df_assessores['Saldo Pontos'] = 0
-        salvar_arquivo(df_assessores, ARQUIVO_ASSESSORES)
-        st.warning("Saldos zerados.")
-        st.rerun()
+    # ABA 1: MARCADORES
+    with aba_cfg[0]:
+        with st.form("form_marcadores"):
+            nome_m = st.text_input("Nome do Marcador")
+            peso_m = st.number_input("Peso (Horas)", min_value=0.25, step=0.25)
+            if st.form_submit_button("Salvar Marcador"):
+                nova_linha = pd.DataFrame({'Marcador': [nome_m], 'Peso': [peso_m]})
+                st.session_state.marcardores = pd.concat([st.session_state.marcardores, nova_linha], ignore_index=True)
+        st.dataframe(st.session_state.marcardores, use_container_width=True)
 
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    st.subheader("Nova Distribuição")
-    lista_opcoes = df_marcadores['Nome do Marcador'].unique()
-    processo_selecionado = st.selectbox("Selecione o Tipo:", lista_opcoes)
-    
-    if len(df_marcadores) > 0:
-        dados_proc = df_marcadores[df_marcadores['Nome do Marcador'] == processo_selecionado].iloc[0]
-        peso_atual = int(dados_proc['Peso'])
-        cat_atual = dados_proc['Categoria']
-        st.info(f"Categoria: {cat_atual} | Peso: {peso_atual}")
-    
-    num_processo = st.text_input("Número / ID (Opcional)")
-
-    if st.button("🚀 Distribuir", type="primary"):
-        candidatos = []
-        log = []
-        for index, row in df_assessores.iterrows():
-            apto, motivo = verificar_disponibilidade(row, cat_atual)
-            if apto: candidatos.append(index)
-            else: log.append(f"{row['Nome']}: {motivo}")
+    # ABA 2: EQUIPE
+    with aba_cfg[1]:
+        nome_e = st.text_input("Nome do Assessor")
+        if st.button("Cadastrar Assessor"):
+            if nome_e and nome_e not in st.session_state.equipe['Nome'].values:
+                nova_eq = pd.DataFrame({'Nome': [nome_e], 'Especialidades': [[]], 'Saldo': [0.0]})
+                st.session_state.equipe = pd.concat([st.session_state.equipe, nova_eq], ignore_index=True)
         
-        if not candidatos:
-            st.error("Ninguém disponível!")
-            with st.expander("Ver motivos"):
-                for l in log: st.write(l)
-        else:
-            df_aptos = df_assessores.loc[candidatos]
-            idx_vencedor = df_aptos['Saldo Pontos'].idxmin()
-            nome_vencedor = df_assessores.at[idx_vencedor, 'Nome']
-            
-            df_assessores.at[idx_vencedor, 'Saldo Pontos'] += peso_atual
-            salvar_arquivo(df_assessores, ARQUIVO_ASSESSORES)
-            
-            st.balloons()
-            st.success(f"ENTREGAR PARA: **{nome_vencedor}**")
-            st.caption(f"Saldo atualizado do assessor: {df_assessores.at[idx_vencedor, 'Saldo Pontos']}")
+        for idx, row in st.session_state.equipe.iterrows():
+            with st.expander(f"Especialidades: {row['Nome']}"):
+                escolhas = []
+                for m in st.session_state.marcardores['Marcador']:
+                    is_checked = m in row['Especialidades']
+                    if st.checkbox(m, value=is_checked, key=f"check_{row['Nome']}_{m}"):
+                        escolhas.append(m)
+                st.session_state.equipe.at[idx, 'Especialidades'] = escolhas
 
-with col2:
-    st.subheader("Placar Atual")
-    df_view = df_assessores.sort_values(by="Saldo Pontos")
-    st.dataframe(
-        df_view,
-        column_config={"Saldo Pontos": st.column_config.ProgressColumn("Carga", format="%d pts", min_value=0, max_value=int(df_view["Saldo Pontos"].max() + 10))},
-        use_container_width=True,
-        hide_index=True
+    # ABA 3: FÉRIAS
+    with aba_cfg[2]:
+        for nome in st.session_state.equipe['Nome']:
+            st.write(f"**{nome}**")
+            col1, col2 = st.columns(2)
+            with col1:
+                ini = st.date_input("Início", key=f"ini_{nome}", value=st.session_state.ferias.get(nome, {}).get('inicio', None))
+            with col2:
+                fim = st.date_input("Fim", key=f"fim_{nome}", value=st.session_state.ferias.get(nome, {}).get('fim', None))
+            
+            if st.button("Limpar", key=f"btn_{nome}"):
+                st.session_state.ferias[nome] = {'inicio': None, 'fim': None}
+            else:
+                st.session_state.ferias[nome] = {'inicio': ini, 'fim': fim}
+            st.divider()
+
+    st.markdown("---")
+    st.title("📄 Processos")
+    num_proc = st.text_input("Número (até 26 caracteres)", max_chars=26)
+    data_proc = st.date_input("Data", format="DD/MM/YYYY")
+    marcador_sel = st.selectbox("Marcador", options=st.session_state.marcardores['Marcador'].tolist())
+
+    if st.button("🚀 Distribuir"):
+        # 1. Filtro de Férias
+        disponiveis = [n for n in st.session_state.equipe['Nome'] if not calcular_bloqueio_ferias(n)]
+        
+        if not disponiveis:
+            st.error("Não há assessores disponíveis (todos em férias ou bloqueio).")
+        else:
+            # 2. Válvula de Escape: Quem é o mais carregado do gabinete?
+            assessor_mais_carregado = st.session_state.equipe.sort_values(by='Saldo', ascending=False).iloc[0]['Nome']
+            
+            # 3. Filtrar especialistas para o marcador
+            especialistas = []
+            for n in disponiveis:
+                specs = st.session_state.equipe[st.session_state.equipe['Nome'] == n]['Especialidades'].values[0]
+                if marcador_sel in specs:
+                    especialistas.append(n)
+            
+            # Se o especialista for o mais carregado ou se não houver especialista disponível
+            if not especialistas or (len(especialistas) == 1 and especialistas[0] == assessor_mais_carregado):
+                selecao_final = disponiveis # Abre para todos
+                motivo = "Válvula de Escape ativada ou sem especialista específico."
+            else:
+                selecao_final = especialistas
+                motivo = "Distribuição entre especialistas."
+
+            # 4. Escolher quem tem o menor saldo entre os selecionados
+            ranking = st.session_state.equipe[st.session_state.equipe['Nome'].isin(selecao_final)].sort_values(by='Saldo')
+            vencedor = ranking.iloc[0]['Nome']
+            
+            # 5. Calcular Peso (Regra do Triador)
+            peso_base = st.session_state.marcardores[st.session_state.marcardores['Marcador'] == marcador_sel]['Peso'].values[0]
+            peso_final = peso_base * 2 if vencedor == st.session_state.triador_atual else peso_base
+            
+            # 6. Atualizar Saldo e Histórico
+            idx_venc = st.session_state.equipe[st.session_state.equipe['Nome'] == vencedor].index
+            st.session_state.equipe.at[idx_venc[0], 'Saldo'] += peso_final
+            
+            novo_hist = pd.DataFrame({
+                'Data': [data_proc.strftime("%d/%m/%y")],
+                'Processo': [num_proc],
+                'Marcador': [marcador_sel],
+                'Assessor': [vencedor],
+                'Peso Real': [peso_final]
+            })
+            st.session_state.historico = pd.concat([novo_hist, st.session_state.historico], ignore_index=True)
+            st.success(f"✅ DISTRIBUÍDO: Entregar para {vencedor} ({motivo})")
+
+# --- PAINEL PRINCIPAL ---
+st.header("⚖️ Distribuição de Processos GAB PRE/GO")
+
+# Destaque do Triador
+with st.container():
+    st.info("⚡ **GESTÃO DE TRIAGEM**")
+    st.session_state.triador_atual = st.selectbox(
+        "Quem é o triador da semana? (Desoneração de 50%)", 
+        options=st.session_state.equipe['Nome'].tolist(),
+        index=0 if st.session_state.triador_atual is None and not st.session_state.equipe.empty else None
     )
+
+st.divider()
+
+col_graf, col_hist = st.columns([1, 1])
+
+with col_graf:
+    st.subheader("📊 Pote de Horas (Saldo Atual)")
+    if not st.session_state.equipe.empty:
+        df_grafico = st.session_state.equipe.sort_values(by='Saldo', ascending=True)
+        st.bar_chart(data=df_grafico, x='Nome', y='Saldo', color='#004b87')
+    else:
+        st.write("Cadastre a equipe para ver o gráfico.")
+
+with col_hist:
+    st.subheader("📜 Últimas Distribuições")
+    st.dataframe(st.session_state.historico.head(10), use_container_width=True)
+
+# Rodapé informando bloqueios ativos
+st.divider()
+st.subheader("📅 Status da Equipe")
+cols = st.columns(len(st.session_state.equipe['Nome']) if not st.session_state.equipe.empty else 1)
+for i, nome in enumerate(st.session_state.equipe['Nome']):
+    em_ferias = calcular_bloqueio_ferias(nome)
+    status = "🔴 Bloqueado/Férias" if em_ferias else "🟢 Disponível"
+    if nome == st.session_state.triador_atual:
+        status = "⭐ Triador"
+    cols[i].metric(nome, f"{st.session_state.equipe.iloc[i]['Saldo']}h", status)
