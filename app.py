@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 
 # --- CONFIGURAÇÕES FIXAS ---
-URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1btSAJK1M71CTGrtOVnEV4EHmEaF9NGR6nMvpGI6qHt0/edit?usp=sharing"
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1btSAJK1M71CTGrtOVnEV4EHmEaF9NGR6nMvpGI6qHt0/export?format=csv"
 URL_TUTORIAL = "https://docs.google.com/document/d/1AFeJ16hdow2g1Di1OthFcUPZV6qkDiefKyIbe8v_mCM/edit?usp=sharing"
 
 st.set_page_config(page_title="Distribuidor GAB PRE/GO", layout="wide", page_icon="⚖️")
@@ -106,3 +106,4 @@ if not df_h.empty:
     st.bar_chart(chart_data)
     with st.expander("📂 Histórico"):
         st.dataframe(df_h.sort_index(ascending=False), use_container_width=True)
+
